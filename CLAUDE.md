@@ -9,31 +9,52 @@ Use `uv` for all Python package and virtual environment management — never `pi
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install pyserial
+uv pip install pyserial          # USB730L mode
+uv pip install requests          # ibr600-api mode
+uv pip install paramiko          # ibr600-ssh mode
 ```
 
 ## Running the Script
 
 ```bash
+# USB730L (default)
+python vz-sms.py -n "+1XXXXXXXXXX" -m "Message text"
 python vz-sms.py -d /dev/ttyUSB0 -n "+1XXXXXXXXXX" -m "Message text"
-```
 
-The `-d` flag defaults to `/dev/ttyUSB0` if omitted.
+# Cradlepoint IBR600 — REST API
+python vz-sms.py --mode ibr600-api --router 192.168.0.1 --user admin --password secret \
+    -n "+1XXXXXXXXXX" -m "Message text"
+
+# Cradlepoint IBR600 — SSH
+python vz-sms.py --mode ibr600-ssh --router 192.168.0.1 --user admin --password secret \
+    -n "+1XXXXXXXXXX" -m "Message text"
+```
 
 ## Architecture
 
-The entire project is a single script (`vz-sms.py`) with no external dependencies beyond `pyserial`.
+Single script (`vz-sms.py`), no package structure. Each send mode is an independent function; `main()` dispatches to the right one based on `--mode`.
 
-**AT command flow** (`vz-sms.py`):
-1. `main()` parses CLI args and calls `send_sms()`
-2. `send_sms()` opens the serial port, runs the setup sequence (`ATZ` → `ATE0` → `AT` → `AT+CMGF=1` → `AT+CSCS="GSM"`), then issues `AT+CMGS="<number>"` and waits for the `>` prompt
-3. The message body + `\x1A` (Ctrl+Z) is written to trigger transmission; `+CMGS:` in the response confirms success
-4. `send_at()` is a low-level helper: writes `command\r`, sleeps, reads available bytes, and raises `RuntimeError` if the expected string (default `"OK"`) is absent
+**USB730L flow** (`send_sms_usb730l`):
+1. Opens serial port, waits `SETTLE_TIME` for the port to stabilize
+2. Runs setup sequence: `ATZ` → `ATE0` → `AT` → `AT+CMGF=1` → `AT+CSCS="GSM"`
+3. Issues `AT+CMGS="<number>"`, waits for `>` prompt
+4. Writes message body + `\x1A` (Ctrl+Z) to transmit; confirms `+CMGS:` in response
+5. `send_at()` is the low-level helper: write → sleep → read → assert expected string
 
-**Key timing constants** (top of file): `SETTLE_TIME`, `CMD_WAIT`, `SEND_WAIT` — adjust if the modem is slow to respond.
+**IBR600 REST API flow** (`send_sms_ibr600_api`):
+- `POST /api/control/sms` with `{"data": {"phone": ..., "message": ...}}`
+- HTTP Digest Auth; tries HTTPS first, falls back to HTTP on SSL error
+- Router uses a self-signed cert — `verify=False` is intentional
+
+**IBR600 SSH flow** (`send_sms_ibr600_ssh`):
+- Connects via Paramiko; runs `sms <number> '<message>'`
+- Single quotes in the message are escaped with `'\\''`
+- Uses `AutoAddPolicy` (trusts unknown host keys on first connect)
+
+**Key timing constants** (USB730L, top of file): `SETTLE_TIME`, `CMD_WAIT`, `SEND_WAIT` — adjust if the modem is slow to respond.
 
 ## Hardware Notes
 
-- The modem exposes multiple `/dev/ttyUSBx` ports; the AT command port is typically `/dev/ttyUSB0`
-- User must be in the `dialout` group: `sudo usermod -aG dialout $USER`
-- Full AT command reference: `doc/USB730L_SMS.md`
+- USB730L: AT command port is typically `/dev/ttyUSB0`; user must be in `dialout` group
+- IBR600: REST API endpoint and JSON payload may vary by firmware — verify via browser DevTools if sends fail
+- Full reference docs: `doc/USB730L_SMS.md`, `doc/IBR600_SMS.md`
