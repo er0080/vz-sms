@@ -12,15 +12,7 @@ Send SMS messages from the command line using either a **Verizon USB730L LTE mod
 ```bash
 uv venv
 source .venv/bin/activate
-
-# USB730L mode (default)
-uv pip install pyserial
-
-# Cradlepoint REST API mode
-uv pip install requests
-
-# Cradlepoint SSH mode
-uv pip install paramiko
+uv pip install -r requirements.txt
 ```
 
 For USB730L, your user must be in the `dialout` group:

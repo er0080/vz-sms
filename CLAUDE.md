@@ -9,9 +9,7 @@ Use `uv` for all Python package and virtual environment management — never `pi
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install pyserial          # USB730L mode
-uv pip install requests          # ibr600-api mode
-uv pip install paramiko          # ibr600-ssh mode
+uv pip install -r requirements.txt
 ```
 
 ## Running the Script
