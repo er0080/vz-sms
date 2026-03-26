@@ -19,10 +19,6 @@ uv pip install -r requirements.txt
 python vz-sms.py -n "+1XXXXXXXXXX" -m "Message text"
 python vz-sms.py -d /dev/ttyUSB0 -n "+1XXXXXXXXXX" -m "Message text"
 
-# Cradlepoint IBR600 — REST API
-python vz-sms.py --mode ibr600-api --router 192.168.0.1 --user admin --password secret \
-    -n "+1XXXXXXXXXX" -m "Message text"
-
 # Cradlepoint IBR600 — SSH
 python vz-sms.py --mode ibr600-ssh --router 192.168.0.1 --user admin --password secret \
     -n "+1XXXXXXXXXX" -m "Message text"
@@ -39,11 +35,6 @@ Single script (`vz-sms.py`), no package structure. Each send mode is an independ
 4. Writes message body + `\x1A` (Ctrl+Z) to transmit; confirms `+CMGS:` in response
 5. `send_at()` is the low-level helper: write → sleep → read → assert expected string
 
-**IBR600 REST API flow** (`send_sms_ibr600_api`):
-- `POST /api/control/sms` with `{"data": {"phone": ..., "message": ...}}`
-- HTTP Digest Auth; tries HTTPS first, falls back to HTTP on SSL error
-- Router uses a self-signed cert — `verify=False` is intentional
-
 **IBR600 SSH flow** (`send_sms_ibr600_ssh`):
 - Connects via Paramiko; runs `sms <number> '<message>'`
 - Single quotes in the message are escaped with `'\\''`
@@ -54,5 +45,4 @@ Single script (`vz-sms.py`), no package structure. Each send mode is an independ
 ## Hardware Notes
 
 - USB730L: AT command port is typically `/dev/ttyUSB0`; user must be in `dialout` group
-- IBR600: REST API endpoint and JSON payload may vary by firmware — verify via browser DevTools if sends fail
 - Full reference docs: `doc/USB730L_SMS.md`, `doc/IBR600_SMS.md`

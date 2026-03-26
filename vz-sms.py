@@ -3,20 +3,15 @@
 vz-sms.py — Send SMS from the command line via a USB modem or Cradlepoint router.
 
 Modes:
-  usb730l      (default) Verizon USB730L modem via serial AT commands
-  ibr600-api   Cradlepoint IBR600 via local REST API (HTTP Digest Auth)
-  ibr600-ssh   Cradlepoint IBR600 via SSH CLI `sms` command
+  usb730l    (default) Verizon USB730L modem via serial AT commands
+  ibr600-ssh Cradlepoint IBR600 via SSH CLI `sms` command
 
 Usage:
     # USB730L (default)
     python vz-sms.py -n "+13159224851" -m "Hello!"
     python vz-sms.py -d /dev/ttyUSB0 -n "+13159224851" -m "Hello!"
 
-    # Cradlepoint REST API
-    python vz-sms.py --mode ibr600-api --router 192.168.0.1 --user admin --password secret \
-        -n "+13159224851" -m "Hello!"
-
-    # Cradlepoint SSH
+    # Cradlepoint IBR600 SSH
     python vz-sms.py --mode ibr600-ssh --router 192.168.0.1 --user admin --password secret \
         -n "+13159224851" -m "Hello!"
 """
@@ -36,8 +31,7 @@ SEND_WAIT   = 5.0    # seconds to wait for +CMGS confirmation
 # ---------------------------------------------------------------------------
 # IBR600 constants
 # ---------------------------------------------------------------------------
-IBR600_API_PATH = "/api/control/sms"
-IBR600_TIMEOUT  = 10  # seconds for HTTP / SSH operations
+IBR600_TIMEOUT = 10  # seconds for SSH operations
 
 
 # ===========================================================================
@@ -56,7 +50,7 @@ def send_at(ser, command: str, wait: float = CMD_WAIT, expect: str = "OK") -> st
 
 def send_sms_usb730l(port: str, number: str, message: str) -> str:
     """Send an SMS via the Verizon USB730L modem using AT commands."""
-    import serial  # imported here so ibr600 modes don't require pyserial
+    import serial
 
     with serial.Serial(port, BAUD_RATE, timeout=5) as ser:
         time.sleep(SETTLE_TIME)
@@ -83,43 +77,6 @@ def send_sms_usb730l(port: str, number: str, message: str) -> str:
             raise RuntimeError(f"SMS send failed — no +CMGS confirmation: {repr(response)}")
 
         return response.strip()
-
-
-# ===========================================================================
-# Cradlepoint IBR600 — REST API
-# ===========================================================================
-
-def send_sms_ibr600_api(router: str, user: str, password: str,
-                         number: str, message: str) -> str:
-    """Send an SMS via the IBR600 local REST API (HTTP Digest Auth)."""
-    import requests
-    from requests.auth import HTTPDigestAuth
-    import urllib3
-
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    # Try HTTPS first; fall back to HTTP if a connection error occurs
-    for scheme in ("https", "http"):
-        url = f"{scheme}://{router}{IBR600_API_PATH}"
-        payload = {"data": {"phone": number, "message": message}}
-        try:
-            response = requests.post(
-                url,
-                json=payload,
-                auth=HTTPDigestAuth(user, password),
-                verify=False,
-                timeout=IBR600_TIMEOUT,
-            )
-            response.raise_for_status()
-            return str(response.json())
-        except requests.exceptions.SSLError:
-            continue  # try plain HTTP
-        except requests.exceptions.ConnectionError:
-            if scheme == "https":
-                continue
-            raise
-
-    raise RuntimeError(f"Could not connect to router at {router} via HTTPS or HTTP")
 
 
 # ===========================================================================
@@ -167,7 +124,7 @@ def main() -> int:
 
     parser.add_argument(
         "--mode",
-        choices=["usb730l", "ibr600-api", "ibr600-ssh"],
+        choices=["usb730l", "ibr600-ssh"],
         default="usb730l",
         help="Send mode (default: usb730l)",
     )
@@ -210,22 +167,17 @@ def main() -> int:
     ibr_group.add_argument(
         "--password",
         metavar="PASS",
-        help="Router admin password",
+        help="Router admin password (required for ibr600-ssh)",
     )
 
     args = parser.parse_args()
 
-    # Validate IBR600 options
-    if args.mode in ("ibr600-api", "ibr600-ssh") and not args.password:
-        parser.error(f"--password is required for --mode {args.mode}")
+    if args.mode == "ibr600-ssh" and not args.password:
+        parser.error("--password is required for --mode ibr600-ssh")
 
     try:
         if args.mode == "usb730l":
             result = send_sms_usb730l(args.device, args.number, args.message)
-        elif args.mode == "ibr600-api":
-            result = send_sms_ibr600_api(
-                args.router, args.user, args.password, args.number, args.message
-            )
         else:  # ibr600-ssh
             result = send_sms_ibr600_ssh(
                 args.router, args.user, args.password, args.number, args.message
@@ -235,14 +187,11 @@ def main() -> int:
         return 0
 
     except Exception as exc:  # pylint: disable=broad-except
-        # Provide mode-specific hints alongside the error message
         print(f"Error: {exc}", file=sys.stderr)
         if args.mode == "usb730l":
             print("Check that the modem is connected and you are in the 'dialout' group.", file=sys.stderr)
             print("  sudo usermod -aG dialout $USER  (then log out/in)", file=sys.stderr)
-        elif args.mode == "ibr600-api":
-            print(f"Check that the router at {args.router} is reachable and credentials are correct.", file=sys.stderr)
-        elif args.mode == "ibr600-ssh":
+        else:
             print(f"Check that SSH is enabled on {args.router} and credentials are correct.", file=sys.stderr)
         return 1
 

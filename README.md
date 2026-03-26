@@ -1,6 +1,6 @@
 # vz-sms
 
-Send SMS messages from the command line using either a **Verizon USB730L LTE modem** (AT commands over serial) or a **Cradlepoint IBR600 router** (REST API or SSH).
+Send SMS messages from the command line using either a **Verizon USB730L LTE modem** (AT commands over serial) or a **Cradlepoint IBR600 router** (SSH).
 
 ## Requirements
 
@@ -30,14 +30,6 @@ python vz-sms.py -n "+13159224851" -m "Hello from Python!"
 python vz-sms.py -d /dev/ttyUSB1 -n "+13159224851" -m "Hello from Python!"
 ```
 
-### Cradlepoint IBR600 — REST API
-
-```bash
-python vz-sms.py --mode ibr600-api --router 192.168.0.1 \
-    --user admin --password secret \
-    -n "+13159224851" -m "Hello from Python!"
-```
-
 ### Cradlepoint IBR600 — SSH
 
 ```bash
@@ -50,7 +42,7 @@ python vz-sms.py --mode ibr600-ssh --router 192.168.0.1 \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--mode` | `usb730l` | Send mode: `usb730l`, `ibr600-api`, `ibr600-ssh` |
+| `--mode` | `usb730l` | Send mode: `usb730l`, `ibr600-ssh` |
 | `-n`, `--number` | *(required)* | Destination phone number in E.164 format |
 | `-m`, `--message` | *(required)* | SMS message body |
 | `-d`, `--device` | `/dev/ttyUSB0` | Serial port (USB730L only) |
@@ -82,8 +74,6 @@ minicom -D /dev/ttyUSB0 -b 115200
 | `Permission denied: /dev/ttyUSB0` | Not in dialout group | `sudo usermod -aG dialout $USER` |
 | `No such file or directory` | Wrong port or modem not plugged in | Check `dmesg`, try `/dev/ttyUSB1` |
 | `No '>' prompt from modem` | Modem busy or stuck | Unplug/replug modem and retry |
-| `Could not connect to router` | Router unreachable | Check IP, try ping; verify HTTP/HTTPS setting |
-| `401 Unauthorized` (IBR600 API) | Wrong credentials | Verify username/password in router web UI |
 | SSH connection refused (IBR600) | SSH not enabled | Enable SSH in router admin interface |
 | SMS sent but not received | Carrier filtering | Verify destination number; carriers may filter A2P SMS |
 
