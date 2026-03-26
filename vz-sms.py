@@ -1,25 +1,44 @@
 #!/usr/bin/env python3
 """
-vz-sms.py — Send SMS from the command line via a Verizon USB730L LTE modem.
+vz-sms.py — Send SMS from the command line via a USB modem or Cradlepoint router.
+
+Modes:
+  usb730l    (default) Verizon USB730L modem via serial AT commands
+  ibr600-ssh Cradlepoint IBR600 via SSH CLI `sms` command
 
 Usage:
-    python vz-sms.py -d /dev/ttyUSB0 -n "+13159224851" -m "Hello from Python!"
+    # USB730L (default)
+    python vz-sms.py -n "+13159224851" -m "Hello!"
+    python vz-sms.py -d /dev/ttyUSB0 -n "+13159224851" -m "Hello!"
+
+    # Cradlepoint IBR600 SSH
+    python vz-sms.py --mode ibr600-ssh --router 192.168.0.1 --user admin --password secret \
+        -n "+13159224851" -m "Hello!"
 """
 
 import argparse
 import sys
 import time
 
-import serial
+# ---------------------------------------------------------------------------
+# USB730L constants
+# ---------------------------------------------------------------------------
+BAUD_RATE   = 115200
+SETTLE_TIME = 1.0    # seconds after opening serial port
+CMD_WAIT    = 0.5    # seconds after each AT command
+SEND_WAIT   = 5.0    # seconds to wait for +CMGS confirmation
+
+# ---------------------------------------------------------------------------
+# IBR600 constants
+# ---------------------------------------------------------------------------
+IBR600_TIMEOUT = 10  # seconds for SSH operations
 
 
-BAUD_RATE = 115200
-SETTLE_TIME = 1.0     # seconds after opening port
-CMD_WAIT = 0.5        # seconds after sending a command
-SEND_WAIT = 5.0       # seconds to wait for +CMGS confirmation
+# ===========================================================================
+# USB730L — AT command helpers
+# ===========================================================================
 
-
-def send_at(ser: serial.Serial, command: str, wait: float = CMD_WAIT, expect: str = "OK") -> str:
+def send_at(ser, command: str, wait: float = CMD_WAIT, expect: str = "OK") -> str:
     """Send an AT command and return the response, raising on unexpected output."""
     ser.write((command + "\r").encode())
     time.sleep(wait)
@@ -29,11 +48,10 @@ def send_at(ser: serial.Serial, command: str, wait: float = CMD_WAIT, expect: st
     return response.strip()
 
 
-def send_sms(port: str, number: str, message: str) -> str:
-    """
-    Open the modem serial port and send an SMS to number.
-    Returns the modem's confirmation response string.
-    """
+def send_sms_usb730l(port: str, number: str, message: str) -> str:
+    """Send an SMS via the Verizon USB730L modem using AT commands."""
+    import serial
+
     with serial.Serial(port, BAUD_RATE, timeout=5) as ser:
         time.sleep(SETTLE_TIME)
 
@@ -61,15 +79,54 @@ def send_sms(port: str, number: str, message: str) -> str:
         return response.strip()
 
 
+# ===========================================================================
+# Cradlepoint IBR600 — SSH CLI
+# ===========================================================================
+
+def send_sms_ibr600_ssh(router: str, user: str, password: str,
+                         number: str, message: str) -> str:
+    """Send an SMS via the IBR600 SSH CLI `sms` command."""
+    import paramiko
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        client.connect(
+            hostname=router,
+            username=user,
+            password=password,
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=IBR600_TIMEOUT,
+        )
+        # Single-quote the message; escape any embedded single quotes
+        safe_message = message.replace("'", "'\\''")
+        _, stdout, stderr = client.exec_command(f"sms {number} '{safe_message}'")
+        output = stdout.read().decode().strip()
+        error  = stderr.read().decode().strip()
+        if error:
+            raise RuntimeError(f"Router returned error: {error}")
+        return output or "OK"
+    finally:
+        client.close()
+
+
+# ===========================================================================
+# CLI
+# ===========================================================================
+
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Send an SMS via a Verizon USB730L LTE modem using AT commands."
+        description="Send an SMS via a USB730L modem or Cradlepoint IBR600 router.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+
     parser.add_argument(
-        "-d", "--device",
-        default="/dev/ttyUSB0",
-        metavar="PORT",
-        help="Serial port for the modem (default: /dev/ttyUSB0)",
+        "--mode",
+        choices=["usb730l", "ibr600-ssh"],
+        default="usb730l",
+        help="Send mode (default: usb730l)",
     )
     parser.add_argument(
         "-n", "--number",
@@ -83,19 +140,59 @@ def main() -> int:
         metavar="TEXT",
         help="SMS message body",
     )
+
+    # USB730L options
+    usb_group = parser.add_argument_group("USB730L options")
+    usb_group.add_argument(
+        "-d", "--device",
+        default="/dev/ttyUSB0",
+        metavar="PORT",
+        help="Serial port for the modem (default: /dev/ttyUSB0)",
+    )
+
+    # IBR600 options
+    ibr_group = parser.add_argument_group("IBR600 options")
+    ibr_group.add_argument(
+        "--router",
+        default="192.168.0.1",
+        metavar="IP",
+        help="Router IP address (default: 192.168.0.1)",
+    )
+    ibr_group.add_argument(
+        "--user",
+        default="admin",
+        metavar="USER",
+        help="Router admin username (default: admin)",
+    )
+    ibr_group.add_argument(
+        "--password",
+        metavar="PASS",
+        help="Router admin password (required for ibr600-ssh)",
+    )
+
     args = parser.parse_args()
 
+    if args.mode == "ibr600-ssh" and not args.password:
+        parser.error("--password is required for --mode ibr600-ssh")
+
     try:
-        result = send_sms(args.device, args.number, args.message)
+        if args.mode == "usb730l":
+            result = send_sms_usb730l(args.device, args.number, args.message)
+        else:  # ibr600-ssh
+            result = send_sms_ibr600_ssh(
+                args.router, args.user, args.password, args.number, args.message
+            )
+
         print(f"SMS sent successfully.\n{result}")
         return 0
-    except serial.SerialException as exc:
-        print(f"Serial port error: {exc}", file=sys.stderr)
-        print("Check that the modem is connected and you have permission to access the port.", file=sys.stderr)
-        print("  sudo usermod -aG dialout $USER  (then log out/in)", file=sys.stderr)
-        return 1
-    except RuntimeError as exc:
-        print(f"Modem error: {exc}", file=sys.stderr)
+
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"Error: {exc}", file=sys.stderr)
+        if args.mode == "usb730l":
+            print("Check that the modem is connected and you are in the 'dialout' group.", file=sys.stderr)
+            print("  sudo usermod -aG dialout $USER  (then log out/in)", file=sys.stderr)
+        else:
+            print(f"Check that SSH is enabled on {args.router} and credentials are correct.", file=sys.stderr)
         return 1
 
 
